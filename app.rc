@@ -1,0 +1,3 @@
+// Ресурс иконки приложения для Windows.
+// IDI_ICON1 с минимальным числовым ID — Windows берёт его как иконку .exe.
+IDI_ICON1 ICON "assets/app.ico"
