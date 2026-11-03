@@ -141,6 +141,16 @@ bool isIpLiteral(const QString &host)
     return a.setAddress(host);
 }
 
+// Сервер с выходом в России (по подписи из подписки): через него
+// заблокированное всё равно не откроется, а пинг у него лучший — urltest
+// выбрал бы именно его. Поэтому в «Авто» такие не берём.
+bool isRuExit(const QString &name)
+{
+    return name.contains(QStringLiteral("🇷🇺"))
+        || name.contains(QStringLiteral("Росси"), Qt::CaseInsensitive)
+        || name.contains(QStringLiteral("Russia"), Qt::CaseInsensitive);
+}
+
 // Протоколы без TCP — TCP-пинг к ним бессмысленен.
 bool isUdpProto(const QString &proto)
 {
@@ -865,9 +875,13 @@ QList<VlessController::Server> VlessController::serversForConnect() const
 {
     QList<Server> list;
     if (useAutoGroup()) {
-        for (const Server &s : m_serversData)
-            if (s.unsupported.isEmpty()) list.append(s);
-        return list;
+        QList<Server> ru;
+        for (const Server &s : m_serversData) {
+            if (!s.unsupported.isEmpty()) continue;
+            (isRuExit(s.name) ? ru : list).append(s);
+        }
+        // Российские выходы — только если других серверов нет вообще.
+        return list.isEmpty() ? ru : list;
     }
     if (m_autoSelect) {
         // «Авто», но живой сервер ровно один — берём его.
