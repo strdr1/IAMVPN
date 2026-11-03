@@ -1,0 +1,5 @@
+{
+  "version": "1.1.0",
+  "url": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-Setup.exe",
+  "notes": "v1.1.0: подписки из нескольких серверов (vless, vmess, trojan, ss, hysteria2, tuic), режим «Авто» с автопереключением, честная проверка связи, автообновления."
+}
