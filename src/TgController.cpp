@@ -12,6 +12,8 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 
+#include "AppPaths.h"
+
 // ─────────────────────────────────────────────────────────────────────────
 //  Реализация TgController.
 // ─────────────────────────────────────────────────────────────────────────
@@ -36,8 +38,7 @@ TgController::~TgController()
 
 QString TgController::engineDir() const
 {
-    return QCoreApplication::applicationDirPath()
-         + QStringLiteral("/engine/tgproxy");
+    return AppPaths::engineDir() + QStringLiteral("/tgproxy");
 }
 
 QString TgController::pythonExe() const
@@ -83,7 +84,13 @@ void TgController::start()
         return;
 
     const QString dir = engineDir();
-    if (!QFileInfo::exists(dir + QStringLiteral("/proxy/tg_ws_proxy.py"))) {
+#ifdef Q_OS_WIN
+    const QString entry = dir + QStringLiteral("/proxy/tg_ws_proxy.py");
+#else
+    // macOS: прокси собран PyInstaller-ом в один бинарник (Python не нужен).
+    const QString entry = dir + QStringLiteral("/tg-ws-proxy");
+#endif
+    if (!QFileInfo::exists(entry)) {
         setStatus(QStringLiteral("Движок Telegram не найден"));
         return;
     }
@@ -109,11 +116,15 @@ void TgController::start()
     // Запускаем python НАПРЯМУЮ (без -m), указывая полный путь к скрипту-входу.
     // -m требует, чтобы пакет был в sys.path; прямой путь надёжнее.
     // Скрипт сам по __file__ найдёт свой пакет proxy.
-    const QString py = pythonExe();
     QStringList args;
+#ifdef Q_OS_WIN
+    const QString py = pythonExe();
     args << QStringLiteral("-u")
-         << QStringLiteral("-m") << QStringLiteral("proxy.tg_ws_proxy")
-         << QStringLiteral("--port") << QString::number(m_port)
+         << QStringLiteral("-m") << QStringLiteral("proxy.tg_ws_proxy");
+#else
+    const QString py = entry;
+#endif
+    args << QStringLiteral("--port") << QString::number(m_port)
          << QStringLiteral("--host") << QStringLiteral("127.0.0.1");
     if (!m_workerDomain.isEmpty())
         args << QStringLiteral("--cfproxy-worker-domain") << m_workerDomain;
@@ -140,8 +151,7 @@ void TgController::start()
             this, [this](int code, QProcess::ExitStatus) {
         // Сохраняем весь вывод в лог для диагностики.
         const QByteArray out = m_proc->readAll();
-        QFile log(QCoreApplication::applicationDirPath()
-                  + QStringLiteral("/engine/tgproxy/tg-last-error.log"));
+        QFile log(AppPaths::dataDir() + QStringLiteral("/tg-last-error.log"));
         if (log.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             log.write("exit code: " + QByteArray::number(code) + "\n");
             log.write(out);
@@ -171,10 +181,12 @@ void TgController::stop()
         m_proc->deleteLater();
         m_proc = nullptr;
     }
+#ifdef Q_OS_WIN
     // На всякий случай добиваем по имени (python мог остаться).
     QProcess::startDetached(QStringLiteral("taskkill"),
         {QStringLiteral("/F"), QStringLiteral("/FI"),
          QStringLiteral("WINDOWTITLE eq tg_ws_proxy*")});
+#endif
     setRunning(false);
     setTgLink(QString());
     setStatus(QStringLiteral("Выключено"));

@@ -19,7 +19,6 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 # ── Собираем исполняемый файл ───────────────────────────────────────────
 qt_add_executable(IAMVPN
-    app.rc          # иконка .exe (Windows)
     src/main.cpp
     src/ZapretController.h
     src/ZapretController.cpp
@@ -44,7 +43,13 @@ qt_add_executable(IAMVPN
     src/ProxyEnv.cpp
     src/UpdateChecker.h
     src/UpdateChecker.cpp
+    src/AppPaths.h
 )
+
+# Иконка .exe (Windows-ресурс).
+if(WIN32)
+    target_sources(IAMVPN PRIVATE app.rc)
+endif()
 
 # ── Подключаем QML-модуль (наш интерфейс) ───────────────────────────────
 qt_add_qml_module(IAMVPN
@@ -88,9 +93,43 @@ target_link_libraries(IAMVPN PRIVATE
 
 # ── Копируем встроенный движок (winws + WinDivert + lists + профили) ────
 # рядом с собранным .exe, в подпапку engine/. Приложение запускает его оттуда.
-add_custom_command(TARGET IAMVPN POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/engine"
-        "$<TARGET_FILE_DIR:IAMVPN>/engine"
-    COMMENT "Copying bundled zapret engine next to the executable"
-)
+if(NOT APPLE)
+    add_custom_command(TARGET IAMVPN POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/engine"
+            "$<TARGET_FILE_DIR:IAMVPN>/engine"
+        COMMENT "Copying bundled zapret engine next to the executable"
+    )
+endif()
+
+# ── macOS: бандл IAMVPN.app ─────────────────────────────────────────────
+# Движок для Mac (sing-box universal + собранный TG-прокси) кладёт CI в
+# engine-mac/ — он уходит в Contents/Resources/engine. Windows-часть
+# (winws, python, .bat) в бандл не попадает. Root-помощник и иконка —
+# в Contents/Resources.
+if(APPLE)
+    if(NOT IAMVPN_VERSION)
+        set(IAMVPN_VERSION "1.0.0")
+    endif()
+    set(MAC_RES
+        "${CMAKE_SOURCE_DIR}/installer/macos/iamvpn.icns"
+        "${CMAKE_SOURCE_DIR}/installer/macos/iamvpn-helper.sh")
+    target_sources(IAMVPN PRIVATE ${MAC_RES})
+    set_source_files_properties(${MAC_RES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(IAMVPN PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "IAMVPN"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "pro.iamvpn.desktop"
+        MACOSX_BUNDLE_ICON_FILE "iamvpn.icns"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${IAMVPN_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${IAMVPN_VERSION}"
+    )
+    if(EXISTS "${CMAKE_SOURCE_DIR}/engine-mac")
+        add_custom_command(TARGET IAMVPN POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/engine-mac"
+                "$<TARGET_BUNDLE_CONTENT_DIR:IAMVPN>/Resources/engine"
+            COMMENT "Copying macOS engine into the app bundle"
+        )
+    endif()
+endif()

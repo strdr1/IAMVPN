@@ -132,6 +132,9 @@ bool ZapretController::testConnection() const
 
 void ZapretController::killWinws()
 {
+#ifndef Q_OS_WIN
+    return;
+#endif
     // Приложение уже от админа (манифест) — глушим напрямую.
     QProcess::startDetached(QStringLiteral("taskkill"),
         {QStringLiteral("/F"), QStringLiteral("/IM"),
@@ -142,6 +145,10 @@ void ZapretController::start()
 {
     if (m_searching || m_running)
         return;
+#ifndef Q_OS_WIN
+    setStatus(QStringLiteral("Обход DPI (zapret) есть только в версии для Windows"));
+    return;
+#endif
 
     // winws и WinDivert требуют админ-прав. Если их нет — сразу понятная
     // ошибка в статус, а не "процесс упал" через 3 секунды.

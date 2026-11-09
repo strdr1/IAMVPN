@@ -6,6 +6,12 @@
 #ifdef Q_OS_WIN
 #  include <windows.h>  // CREATE_NO_WINDOW для скрытия консоли sing-box
 #endif
+#ifdef Q_OS_MACOS
+#  include <signal.h>   // kill(pid, 0) — жив ли root-процесс
+#  include <cerrno>
+#endif
+
+#include "AppPaths.h"
 
 #include <QProcess>
 #include <QCoreApplication>
@@ -181,7 +187,11 @@ VlessController::VlessController(Store *store, QObject *parent)
         // Сайты-исключения.
         m_bypassSites = m_store->setting(QStringLiteral("bypassSites")).toStringList();
         // Использовать ли zapret (по умолчанию да).
+#ifdef Q_OS_WIN
         m_useZapret = m_store->setting(QStringLiteral("useZapret"), true).toBool();
+#else
+        m_useZapret = false;   // zapret (winws) есть только под Windows
+#endif
         // Режим выбора сервера и подписка.
         m_autoSelect = m_store->setting(QStringLiteral("autoSelect"), true).toBool();
         m_subUrl = m_store->setting(QStringLiteral("subUrl")).toString();
@@ -210,20 +220,32 @@ VlessController::~VlessController()
         m_proc->kill();
         m_proc->waitForFinished(2000);
     }
+#ifdef Q_OS_MACOS
+    // Помощник и сам гасит sing-box, когда приложение завершится, —
+    // флаг убираем, чтобы это случилось сразу.
+    QFile::remove(dataDir() + QStringLiteral("/sb.run"));
+#endif
 }
 
 QString VlessController::engineDir() const
 {
-    return QCoreApplication::applicationDirPath() + QStringLiteral("/engine");
+    return AppPaths::engineDir();
+}
+QString VlessController::dataDir() const
+{
+    return AppPaths::dataDir();
 }
 QString VlessController::singBoxPath() const
 {
+#ifdef Q_OS_WIN
     return engineDir() + QStringLiteral("/vpn/sing-box.exe");
+#else
+    return engineDir() + QStringLiteral("/vpn/sing-box");
+#endif
 }
 QString VlessController::configPath() const
 {
-    // Кладём конфиг рядом с движком (sing-box запускается оттуда).
-    return engineDir() + QStringLiteral("/vpn/config.json");
+    return dataDir() + QStringLiteral("/config.json");
 }
 
 void VlessController::setConnected(bool c)
@@ -440,6 +462,9 @@ void VlessController::removeBypassSite(int index)
 // не трогал (не фрагментировал). engine/lists рядом с .exe.
 void VlessController::syncZapretExclude()
 {
+#ifndef Q_OS_WIN
+    return;   // zapret только под Windows
+#endif
     const QString path = QCoreApplication::applicationDirPath()
         + QStringLiteral("/engine/lists/list-exclude-user.txt");
     QFile f(path);
@@ -455,6 +480,9 @@ void VlessController::syncZapretExclude()
 // туннель не поднимется, пока zapret включён. Домены резолвим асинхронно.
 void VlessController::syncServerIpExclude()
 {
+#ifndef Q_OS_WIN
+    return;   // zapret только под Windows
+#endif
     const QString path = QCoreApplication::applicationDirPath()
         + QStringLiteral("/engine/lists/ipset-exclude-user.txt");
     auto ips = std::make_shared<QSet<QString>>();
@@ -1045,7 +1073,9 @@ QString VlessController::buildConfig(const QList<Server> &list) const
     QJsonObject tun;
     tun["type"] = "tun";
     tun["tag"] = "tun-in";
-    tun["interface_name"] = "iamvpn0";
+#ifdef Q_OS_WIN
+    tun["interface_name"] = "iamvpn0";   // на macOS имя только utunN — sing-box выберет сам
+#endif
     tun["address"] = QJsonArray{ "172.19.0.1/30" };
     tun["mtu"] = 9000;
     tun["auto_route"] = true;
@@ -1211,12 +1241,34 @@ void VlessController::connectVpn()
     f.write(cfg.toUtf8());
     f.close();
 
+    const int run = ++m_runId;
+    startEngine([this, run](bool ok, const QString &err) {
+        if (run != m_runId)
+            return;
+        if (!ok) {
+            m_userWantsConnected = false;
+            setConnecting(false);
+            setStatus(QStringLiteral("Не удалось подключиться"));
+            emit errorOccurred(err);
+            return;
+        }
+        QTimer::singleShot(2500, this, [this, run]() {
+            if (run == m_runId)
+                verifyAfterStart(0);
+        });
+    });
+}
+
+// ── Движок sing-box: запуск/остановка по платформам ─────────────────────
+#ifdef Q_OS_WIN
+void VlessController::startEngine(std::function<void(bool, const QString &)> ready)
+{
     // sing-box в TUN-режиме требует администратора. Приложение уже от админа.
     // ВАЖНО: пишем stdout/stderr sing-box в sing-box.log / sing-box.err —
     // диагностика читает их.
     const QString sb      = singBoxPath();
     const QString cfgPath = configPath();
-    const QString workDir = engineDir() + QStringLiteral("/vpn");
+    const QString workDir = dataDir();
     const QString logPath = workDir + QStringLiteral("/sing-box.log");
     const QString errLog  = workDir + QStringLiteral("/sing-box.err");
 
@@ -1242,12 +1294,112 @@ void VlessController::connectVpn()
         });
     m_proc->start();
 
-    const int run = ++m_runId;
-    QTimer::singleShot(2500, this, [this, run]() {
-        if (run == m_runId)
-            verifyAfterStart(0);
-    });
+    ready(true, QString());
 }
+
+void VlessController::stopEngine()
+{
+    if (m_proc)
+        m_proc->kill();
+    // Приложение уже от админа — глушим напрямую (и возможные «сироты»).
+    QProcess::startDetached(QStringLiteral("taskkill"),
+        {QStringLiteral("/F"), QStringLiteral("/IM"),
+         QStringLiteral("sing-box.exe")});
+}
+
+bool VlessController::engineRunning() const
+{
+    return m_proc && m_proc->state() != QProcess::NotRunning;
+}
+#else
+namespace {
+// Жив ли процесс по pid-файлу. Процесс root-овый: kill(pid, 0) от
+// пользователя вернёт EPERM — это тоже «жив».
+bool pidFileAlive(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return false;
+    const int pid = QString::fromLatin1(f.readAll()).trimmed().toInt();
+    if (pid <= 0)
+        return false;
+    return ::kill(pid, 0) == 0 || errno == EPERM;
+}
+
+void touchFile(const QString &path)
+{
+    QFile f(path);
+    f.open(QIODevice::WriteOnly);
+}
+
+// Строка в одинарных кавычках для /bin/sh.
+QString shQuote(QString s)
+{
+    s.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
+    return QLatin1Char('\'') + s + QLatin1Char('\'');
+}
+} // namespace
+
+bool VlessController::macHelperAlive() const
+{
+    return pidFileAlive(dataDir() + QStringLiteral("/helper.pid"));
+}
+
+void VlessController::startEngine(std::function<void(bool, const QString &)> ready)
+{
+    const QString dir = dataDir();
+    // restart + run: помощник прибьёт старый sing-box (если был) и поднимет
+    // заново уже с новым config.json.
+    touchFile(dir + QStringLiteral("/sb.restart"));
+    touchFile(dir + QStringLiteral("/sb.run"));
+    if (macHelperAlive()) {
+        ready(true, QString());
+        return;
+    }
+    if (m_authProc)
+        return;   // окно с паролем уже открыто
+
+    QFile::remove(dir + QStringLiteral("/sb.pid"));
+    QFile::remove(dir + QStringLiteral("/helper.pid"));
+    const QString helper = QDir::cleanPath(QCoreApplication::applicationDirPath()
+                           + QStringLiteral("/../Resources/iamvpn-helper.sh"));
+    const QString cmd = QStringLiteral("/bin/sh %1 %2 %3 %4 >/dev/null 2>&1 &")
+        .arg(shQuote(helper), shQuote(singBoxPath()), shQuote(dir),
+             QString::number(QCoreApplication::applicationPid()));
+    // Внутри строки AppleScript экранируем \ и ".
+    QString as = cmd;
+    as.replace(QLatin1Char('\\'), QStringLiteral("\\\\"))
+      .replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    const QString script = QStringLiteral(
+        "do shell script \"%1\" with administrator privileges "
+        "with prompt \"IAMVPN нужен пароль администратора, чтобы создать VPN-туннель.\"").arg(as);
+
+    m_authProc = new QProcess(this);
+    connect(m_authProc, &QProcess::finished, this,
+            [this, ready, dir](int code, QProcess::ExitStatus st) {
+        m_authProc->deleteLater();
+        m_authProc = nullptr;
+        if (st != QProcess::NormalExit || code != 0) {
+            QFile::remove(dir + QStringLiteral("/sb.run"));
+            ready(false, QStringLiteral(
+                "Без пароля администратора macOS не даст создать VPN-туннель."));
+            return;
+        }
+        ready(true, QString());
+    });
+    m_authProc->start(QStringLiteral("/usr/bin/osascript"), {QStringLiteral("-e"), script});
+}
+
+void VlessController::stopEngine()
+{
+    QFile::remove(dataDir() + QStringLiteral("/sb.run"));
+}
+
+bool VlessController::engineRunning() const
+{
+    return pidFileAlive(dataDir() + QStringLiteral("/sb.pid"));
+}
+#endif
 
 // Delay-тест через clash API: реальный HTTP-запрос сквозь outbound "proxy".
 // groupTest=true → сначала /group/proxy/delay: urltest перемеряет ВСЕ
@@ -1328,9 +1480,9 @@ void VlessController::verifyAfterStart(int attempt)
         return;
     const int run = m_runId;
 
-    if (!m_proc || m_proc->state() == QProcess::NotRunning) {
+    if (!engineRunning()) {
         QString reason;
-        QFile ef(engineDir() + QStringLiteral("/vpn/sing-box.err"));
+        QFile ef(dataDir() + QStringLiteral("/sing-box.err"));
         if (ef.open(QIODevice::ReadOnly)) {
             const QStringList lines = QString::fromUtf8(ef.readAll())
                 .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -1411,12 +1563,7 @@ void VlessController::disconnectVpn()
     if (m_keepAliveTimer && m_keepAliveTimer->isActive())
         m_keepAliveTimer->stop();
 
-    if (m_proc)
-        m_proc->kill();
-    // Приложение уже от админа — глушим напрямую (и возможные «сироты»).
-    QProcess::startDetached(QStringLiteral("taskkill"),
-        {QStringLiteral("/F"), QStringLiteral("/IM"),
-         QStringLiteral("sing-box.exe")});
+    stopEngine();
     // Убираем env-переменные — иначе CLI-программы будут стучать в
     // мёртвый 127.0.0.1:12335 и получать "connection refused".
     ProxyEnv::clearProxy(QStringLiteral("User"));
@@ -1449,7 +1596,7 @@ void VlessController::keepAliveTick()
         reconnectInternal();
     };
 
-    if (!m_proc || m_proc->state() == QProcess::NotRunning) {
+    if (!engineRunning()) {
         m_consecFailures = 1;
         fail();
         return;
@@ -1497,6 +1644,7 @@ void VlessController::reconnectInternal()
 void VlessController::restartTunnel()
 {
     ++m_runId;
+#ifdef Q_OS_WIN
     if (m_proc) {
         m_proc->kill();
         m_proc->waitForFinished(2000);
@@ -1507,6 +1655,8 @@ void VlessController::restartTunnel()
                {QStringLiteral("/F"), QStringLiteral("/IM"),
                 QStringLiteral("sing-box.exe")});
     kill.waitForFinished(2000);
+#endif
+    // macOS: startEngine сам выставит sb.restart — помощник перезапустит.
 
     setConnected(false);
     setConnecting(false);

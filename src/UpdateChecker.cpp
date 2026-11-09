@@ -12,6 +12,8 @@
 #include <QProcess>
 #include <QDir>
 #include <QCoreApplication>
+#include <QDesktopServices>
+#include <QUrl>
 
 UpdateChecker::UpdateChecker(Store *store, QObject *parent)
     : QObject(parent), m_store(store)
@@ -81,11 +83,16 @@ void UpdateChecker::check(const QString &updateUrl)
         const QJsonObject obj = QJsonDocument::fromJson(r->readAll()).object();
         r->deleteLater();
         m_latest = obj.value(QStringLiteral("version")).toString();
+#ifdef Q_OS_MACOS
+        // Для Mac — отдельный DMG; нет его в манифесте — обновления нет.
+        m_url    = obj.value(QStringLiteral("url_mac")).toString();
+#else
         m_url    = obj.value(QStringLiteral("url")).toString();
+#endif
         m_notes  = obj.value(QStringLiteral("notes")).toString();
         emit latestVersionChanged(); emit downloadUrlChanged(); emit notesChanged();
 
-        if (m_latest.isEmpty()) {
+        if (m_latest.isEmpty() || m_url.isEmpty()) {
             m_status = QStringLiteral("Неверный ответ сервера");
         } else if (cmpVersions(m_latest, currentVersion()) > 0) {
             m_avail = true; emit updateAvailableChanged();
@@ -128,7 +135,11 @@ void UpdateChecker::downloadAndInstall()
 
         const QString tmp = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
         QDir().mkpath(tmp);
+#ifdef Q_OS_MACOS
+        const QString path = tmp + QStringLiteral("/IAMVPN.dmg");
+#else
         const QString path = tmp + QStringLiteral("/IAMVPN-Setup.exe");
+#endif
         QFile f(path);
         if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             m_status = QStringLiteral("Не удалось сохранить установщик");
@@ -138,6 +149,14 @@ void UpdateChecker::downloadAndInstall()
         f.write(data);
         f.close();
 
+#ifdef Q_OS_MACOS
+        // Тихой установки на Mac нет: открываем DMG, пользователь
+        // перетаскивает IAMVPN в «Программы» (с заменой).
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        m_status = QStringLiteral("Откройте DMG и перетащите IAMVPN в «Программы» с заменой");
+        emit statusTextChanged();
+        return;
+#endif
         m_status = QStringLiteral("Запускаю установщик…");
         emit statusTextChanged();
 

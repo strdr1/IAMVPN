@@ -19,6 +19,8 @@
 
 #ifdef Q_OS_WIN
 #  include <windows.h>
+#else
+#  include <QMenu>
 #endif
 
 class TrayMenuHelper : public QObject
@@ -100,7 +102,20 @@ public:
             default: break;
         }
 #else
-        Q_UNUSED(vpnOn);
+        // macOS: обычное Qt-меню у курсора (иконка в строке меню).
+        QMenu m;
+        QAction *aVpn  = m.addAction(vpnOn ? QStringLiteral("Отключить VPN")
+                                           : QStringLiteral("Подключить VPN"));
+        m.addSeparator();
+        QAction *aWin  = m.addAction(QStringLiteral("Открыть окно"));
+        QAction *aLogs = m.addAction(QStringLiteral("Папка логов"));
+        m.addSeparator();
+        QAction *aQuit = m.addAction(QStringLiteral("Выход"));
+        QAction *r = m.exec(QCursor::pos());
+        if (r == aVpn)       emit vpnToggle();
+        else if (r == aWin)  emit openWindow();
+        else if (r == aLogs) emit openLogs();
+        else if (r == aQuit) emit quit();
 #endif
     }
 

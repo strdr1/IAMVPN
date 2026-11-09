@@ -133,10 +133,18 @@ void NetworkScanner::doScan()
     QList<QProcess*> pings;
     for (int i = 1; i <= 254; ++i) {
         QProcess *p = new QProcess();
+#ifdef Q_OS_WIN
         p->start(QStringLiteral("ping"),
                  {QStringLiteral("-n"), QStringLiteral("1"),
                   QStringLiteral("-w"), QStringLiteral("200"),
                   base + QString::number(i)});
+#else
+        // macOS: -c 1 пакет, -t 1 сек общий таймаут.
+        p->start(QStringLiteral("/sbin/ping"),
+                 {QStringLiteral("-c"), QStringLiteral("1"),
+                  QStringLiteral("-t"), QStringLiteral("1"),
+                  base + QString::number(i)});
+#endif
         pings.append(p);
     }
     // Ждём, пока все пинги отработают (с запасом по времени).
@@ -154,9 +162,16 @@ void NetworkScanner::doScan()
     // Парсим строки вида:  192.168.0.1   aa-bb-cc-dd-ee-ff   динамический
     QVariantList found;
     QSet<QString> seen;   // чтобы не было дублей по IP
+#ifdef Q_OS_WIN
     QRegularExpression re(
         QStringLiteral("(\\d{1,3}(?:\\.\\d{1,3}){3})\\s+"
                        "([0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})"));
+#else
+    // macOS: "? (192.168.1.1) at a4:2b:b0:1:2:3 on en0 ifscope [ethernet]"
+    QRegularExpression re(
+        QStringLiteral("\\((\\d{1,3}(?:\\.\\d{1,3}){3})\\) at "
+                       "([0-9a-fA-F]{1,2}(?::[0-9a-fA-F]{1,2}){5})"));
+#endif
 
     // Сначала добавляем САМ ПК (его в ARP-таблице может не быть).
     {

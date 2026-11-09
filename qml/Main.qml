@@ -768,8 +768,9 @@ Window {
                         }
                         Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(1,1,1,0.06) }
 
-                        // — Строка-тумблер: обход DPI —
+                        // — Строка-тумблер: обход DPI (zapret есть только под Windows) —
                         RowLayout {
+                            visible: Qt.platform.os === "windows"
                             Layout.fillWidth: true
                             Layout.preferredHeight: 52
                             spacing: 10
@@ -793,6 +794,7 @@ Window {
 
                         // — Строка: выбор профиля zapret (для разных провайдеров) —
                         RowLayout {
+                            visible: Qt.platform.os === "windows"
                             Layout.fillWidth: true
                             Layout.preferredHeight: 44
                             Layout.topMargin: 4

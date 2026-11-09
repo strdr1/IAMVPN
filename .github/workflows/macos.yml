@@ -1,0 +1,115 @@
+name: macOS DMG
+
+# Builds a universal (Apple Silicon + Intel) IAMVPN.app and packs it into
+# IAMVPN-mac.dmg. On a published release the DMG is attached to it;
+# a manual run only uploads it as a workflow artifact.
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  SING_BOX_VERSION: "1.12.12"
+  PYTHON_PKG: "https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg"
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from main.cpp
+        run: |
+          VER=$(grep -o 'setApplicationVersion(QStringLiteral("[0-9.]*")' src/main.cpp | grep -o '[0-9][0-9.]*')
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          echo "Building IAMVPN $VER"
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.1"
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+
+      - name: sing-box (universal)
+        run: |
+          mkdir -p engine-mac/vpn sb
+          for a in amd64 arm64; do
+            curl -fsSL -o sb/$a.tgz "https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-darwin-$a.tar.gz"
+            tar -xzf sb/$a.tgz -C sb
+          done
+          lipo -create sb/sing-box-${SING_BOX_VERSION}-darwin-amd64/sing-box sb/sing-box-${SING_BOX_VERSION}-darwin-arm64/sing-box -output engine-mac/vpn/sing-box
+          chmod +x engine-mac/vpn/sing-box
+          codesign --force -s - engine-mac/vpn/sing-box
+          lipo -info engine-mac/vpn/sing-box
+          engine-mac/vpn/sing-box version
+
+      - name: Telegram proxy (PyInstaller, universal2)
+        continue-on-error: true
+        run: |
+          curl -fsSL -o py.pkg "$PYTHON_PKG"
+          sudo installer -pkg py.pkg -target / >/dev/null
+          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+          "$PY" -m pip install --quiet pyinstaller "httpx[http2]==0.28.1" certifi
+          mkdir -p engine-mac/tgproxy
+          cd engine/tgproxy
+          "$PY" -m PyInstaller --onefile --noconfirm --target-arch universal2 \
+            --name tg-ws-proxy --paths . --collect-data certifi \
+            --distpath ../../engine-mac/tgproxy --workpath ../../tgbuild --specpath ../../tgbuild \
+            ../../installer/macos/tgmain.py
+          cd ../..
+          codesign --force -s - engine-mac/tgproxy/tg-ws-proxy
+          lipo -info engine-mac/tgproxy/tg-ws-proxy
+          engine-mac/tgproxy/tg-ws-proxy --help | head -5
+
+      - name: Build app
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DIAMVPN_VERSION="$VER"
+          cmake --build build --parallel
+          lipo -info build/IAMVPN.app/Contents/MacOS/IAMVPN
+
+      - name: Deploy Qt and sign
+        run: |
+          macdeployqt build/IAMVPN.app -qmldir=qml -always-overwrite
+          codesign --force --deep -s - build/IAMVPN.app
+          codesign --verify --deep --strict build/IAMVPN.app
+          ls -la build/IAMVPN.app/Contents/Resources build/IAMVPN.app/Contents/Resources/engine/*
+
+      - name: Smoke test (QML loads, no missing modules)
+        run: |
+          QT_QPA_PLATFORM=offscreen build/IAMVPN.app/Contents/MacOS/IAMVPN > smoke.log 2>&1 &
+          PID=$!
+          sleep 12
+          kill $PID 2>/dev/null || true
+          cat smoke.log
+          if grep -E "is not installed|module .* not found|qrc:.*(Error|error)|Cannot load library|Failed to create" smoke.log; then
+            echo "::error::QML/plugin problems in smoke test"; exit 1
+          fi
+
+      - name: Make DMG
+        run: |
+          mkdir -p dmg
+          cp -R build/IAMVPN.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "IAMVPN" -srcfolder dmg -ov -format UDZO IAMVPN-mac.dmg
+          ls -la IAMVPN-mac.dmg
+          shasum -a 256 IAMVPN-mac.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IAMVPN-mac
+          path: IAMVPN-mac.dmg
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" IAMVPN-mac.dmg --clobber

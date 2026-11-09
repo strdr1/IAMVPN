@@ -194,8 +194,22 @@ private:
     void applySubscriptionData(const QByteArray &data, const QString &url, bool silent);
 
     QString engineDir() const;
+    QString dataDir() const;     // конфиг и логи sing-box
     QString singBoxPath() const;
     QString configPath() const;
+
+    // Запуск/остановка sing-box. Windows — прямой QProcess (приложение уже
+    // от админа). macOS — через root-помощник iamvpn-helper.sh: пароль
+    // спрашивается один раз за сессию, дальше помощник по файлам-флагам
+    // в dataDir() поднимает/гасит/перезапускает sing-box.
+    // ready(ok, error) — когда движок запущен (или не удалось).
+    void startEngine(std::function<void(bool, const QString &)> ready);
+    void stopEngine();
+    bool engineRunning() const;
+#ifdef Q_OS_MACOS
+    bool macHelperAlive() const;
+    QProcess *m_authProc = nullptr;  // osascript с запросом пароля
+#endif
 
     QList<Server> m_serversData;
     QList<Server> m_connectedSet;   // с чем реально запущен sing-box (s0..sN)

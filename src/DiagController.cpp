@@ -14,6 +14,8 @@
 #include <QTimer>
 #include <QDateTime>
 
+#include "AppPaths.h"
+
 // ─────────────────────────────────────────────────────────────────────────
 //  DiagController — реализация диагностики.
 // ─────────────────────────────────────────────────────────────────────────
@@ -84,6 +86,7 @@ void DiagController::checkProcesses()
 {
     auto isRunning = [](const QString &name) -> bool {
         QProcess p;
+#ifdef Q_OS_WIN
         p.start(QStringLiteral("tasklist"),
                 {QStringLiteral("/FI"),
                  QStringLiteral("IMAGENAME eq ") + name,
@@ -91,14 +94,23 @@ void DiagController::checkProcesses()
         p.waitForFinished(2500);
         return QString::fromLocal8Bit(p.readAllStandardOutput())
                 .contains(name, Qt::CaseInsensitive);
+#else
+        // pgrep видит и root-овый sing-box, запущенный помощником.
+        p.start(QStringLiteral("/usr/bin/pgrep"),
+                {QStringLiteral("-x"), QString(name).remove(QStringLiteral(".exe"))});
+        p.waitForFinished(2500);
+        return p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0;
+#endif
     };
 
+#ifdef Q_OS_WIN
     addResult(QStringLiteral("winws (zapret)"),
               isRunning(QStringLiteral("winws.exe")) ? QStringLiteral("ok")
                                                      : QStringLiteral("warn"),
               isRunning(QStringLiteral("winws.exe"))
                   ? QStringLiteral("процесс работает")
                   : QStringLiteral("не запущен (включите VPN или Обход DPI)"));
+#endif
 
     addResult(QStringLiteral("sing-box (VPN)"),
               isRunning(QStringLiteral("sing-box.exe")) ? QStringLiteral("ok")
@@ -117,7 +129,7 @@ void DiagController::readEngineLogs()
     out += QStringLiteral("time: ") + QDateTime::currentDateTime().toString(Qt::ISODate) + "\n\n";
 
     // sing-box log (записывается VlessController-ом).
-    const QString sbLog = dir + QStringLiteral("/engine/vpn/sing-box.log");
+    const QString sbLog = AppPaths::dataDir() + QStringLiteral("/sing-box.log");
     QFile f(sbLog);
     if (f.exists() && f.open(QIODevice::ReadOnly)) {
         const QByteArray data = f.readAll();
@@ -130,7 +142,7 @@ void DiagController::readEngineLogs()
     }
 
     // Последняя ошибка tg-proxy (если была).
-    const QString tgErr = dir + QStringLiteral("/engine/tgproxy/tg-last-error.log");
+    const QString tgErr = AppPaths::dataDir() + QStringLiteral("/tg-last-error.log");
     QFile ft(tgErr);
     if (ft.exists() && ft.open(QIODevice::ReadOnly)) {
         out += QStringLiteral("--- tg-proxy последняя ошибка ---\n");
