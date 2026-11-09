@@ -36,7 +36,13 @@ jobs:
           arch: clang_64
           cache: true
 
-      - name: sing-box (universal)
+      - name: Drop AGL from Qt's OpenGL wrapper
+        # Qt 6.8.1 still links the AGL framework, which recent macOS SDKs no
+        # longer ship ("ld: framework 'AGL' not found").
+        run: |
+          F="$QT_ROOT_DIR/lib/cmake/Qt6/FindWrapOpenGL.cmake"
+          sed -i '' 's/"-framework AGL"/""/' "$F"
+          grep -n "AGL" "$F" || true
         run: |
           mkdir -p engine-mac/vpn sb
           for a in amd64 arm64; do
@@ -65,7 +71,17 @@ jobs:
           cd ../..
           codesign --force -s - engine-mac/tgproxy/tg-ws-proxy
           lipo -info engine-mac/tgproxy/tg-ws-proxy
-          engine-mac/tgproxy/tg-ws-proxy --help | head -5
+          # Must actually start: a broken binary is removed rather than shipped.
+          # --help exits before the proxy loads its crypto, so run it briefly.
+          engine-mac/tgproxy/tg-ws-proxy --port 1499 --host 127.0.0.1 > tg-smoke.log 2>&1 &
+          TPID=$!
+          sleep 6
+          if kill -0 $TPID 2>/dev/null; then
+            kill $TPID; cat tg-smoke.log | head -20
+          else
+            cat tg-smoke.log; rm -f engine-mac/tgproxy/tg-ws-proxy
+            echo "::warning::tg-ws-proxy exited early, shipping without Telegram proxy"; exit 1
+          fi
 
       - name: Build app
         run: |
