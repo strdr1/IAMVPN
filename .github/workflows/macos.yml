@@ -43,6 +43,8 @@ jobs:
           F="$QT_ROOT_DIR/lib/cmake/Qt6/FindWrapOpenGL.cmake"
           sed -i '' 's/"-framework AGL"/""/' "$F"
           grep -n "AGL" "$F" || true
+
+      - name: sing-box (universal)
         run: |
           mkdir -p engine-mac/vpn sb
           for a in amd64 arm64; do
