@@ -4,7 +4,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define AppName "IAMVPN"
-#define AppVersion "1.1.1"
+#define AppVersion "1.1.2"
 #define AppPublisher "IAMVPN"
 #define AppExe "IAMVPN.exe"
 

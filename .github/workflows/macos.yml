@@ -106,6 +106,9 @@ jobs:
       - name: Deploy Qt and sign
         run: |
           macdeployqt build/IAMVPN.app -qmldir=qml -always-overwrite
+          # SQL drivers come in as a dependency of a QML module; only SQLite
+          # can load (the rest need client libraries that aren't there).
+          find build/IAMVPN.app/Contents/PlugIns/sqldrivers -type f ! -name 'libqsqlite*' -delete 2>/dev/null || true
           codesign --force --deep -s - build/IAMVPN.app
           codesign --verify --deep --strict build/IAMVPN.app
           ls -la build/IAMVPN.app/Contents/Resources build/IAMVPN.app/Contents/Resources/engine/*

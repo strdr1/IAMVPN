@@ -1,11 +1,20 @@
 # IAMVPN
 
-VPN client for Windows built with C++ and Qt 6 (QML), running on top of sing-box.
+VPN client for Windows and macOS built with C++ and Qt 6 (QML), running on top of sing-box.
 
 ## Download
 
-Get the latest installer from [Releases](https://github.com/strdr1/IAMVPN/releases/latest).
-The app checks for updates on every launch and can install them on its own.
+Get the latest build from [Releases](https://github.com/strdr1/IAMVPN/releases/latest):
+
+- **Windows:** `IAMVPN-Setup.exe`. The app checks for updates on every launch and installs them on its own.
+- **macOS:** `IAMVPN-mac.dmg`. One universal build covers Apple Silicon and Intel and needs macOS 12 or later.
+  Open the DMG and drag IAMVPN into Applications.
+
+  The app isn't signed with an Apple developer certificate, so the first launch is blocked.
+  Right-click IAMVPN and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**.
+  On the first connect of each session, macOS asks for an administrator password: creating the VPN tunnel needs it.
+  Updates are downloaded as a new DMG that you drag over the old app.
+  The DPI bypass (zapret) is Windows-only.
 
 ## Features
 
