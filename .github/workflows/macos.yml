@@ -41,8 +41,10 @@ jobs:
         # longer ship ("ld: framework 'AGL' not found").
         run: |
           F="$QT_ROOT_DIR/lib/cmake/Qt6/FindWrapOpenGL.cmake"
-          sed -i '' 's/"-framework AGL"/""/' "$F"
+          sed -i '' -e 's/"-framework AGL"/""/'                     -e 's/find_library(WrapOpenGL_AGL NAMES AGL)/set(WrapOpenGL_AGL "")/' "$F"
           grep -n "AGL" "$F" || true
+          echo "--- other AGL references in Qt:"
+          grep -rIl "AGL" "$QT_ROOT_DIR/lib/cmake" "$QT_ROOT_DIR/mkspecs" 2>/dev/null | head -20 || true
 
       - name: sing-box (universal)
         run: |
@@ -91,7 +93,9 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
             -DIAMVPN_VERSION="$VER"
-          cmake --build build --parallel
+          cmake --build build --parallel || {
+            echo "--- link command:"; grep -rl "AGL" build/CMakeFiles | head;             grep -rh "AGL" build/CMakeFiles/IAMVPN.dir/link.txt | tr ' ' '
+' | grep -n -B2 -A2 AGL; exit 1; }
           lipo -info build/IAMVPN.app/Contents/MacOS/IAMVPN
 
       - name: Deploy Qt and sign
