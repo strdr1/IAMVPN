@@ -1,5 +1,6 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "url": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-Setup.exe",
-  "notes": "v1.1.1: режим «Авто» больше не выбирает серверы с выходом в России (через них заблокированное не открывается). Плюс всё из 1.1.0: подписки из нескольких серверов, автопереключение, честная проверка связи, автообновления."
+  "url_mac": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-mac.dmg",
+  "notes": "v1.1.2: появилась версия для macOS (DMG для Apple Silicon и Intel). На Windows функции те же, что в 1.1.1."
 }
