@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
 # ── Название проекта и версия ───────────────────────────────────────────
-project(IAMVPN VERSION 0.1 LANGUAGES CXX)
+# Версия одна на всё — та, что в main.cpp (setApplicationVersion); отсюда
+# она попадает в Info.plist macOS-бандла.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp" _ver_line
+     REGEX "setApplicationVersion\\(QStringLiteral\\(\"[0-9.]+\"\\)\\)")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" IAMVPN_VERSION "${_ver_line}")
+project(IAMVPN VERSION ${IAMVPN_VERSION} LANGUAGES CXX)
 
 # Используем C++17 (современный, но не требует свежайшего компилятора)
 set(CMAKE_CXX_STANDARD 17)
@@ -108,9 +113,6 @@ endif()
 # (winws, python, .bat) в бандл не попадает. Root-помощник и иконка —
 # в Contents/Resources.
 if(APPLE)
-    if(NOT IAMVPN_VERSION)
-        set(IAMVPN_VERSION "1.0.0")
-    endif()
     set(MAC_RES
         "${CMAKE_SOURCE_DIR}/installer/macos/iamvpn.icns"
         "${CMAKE_SOURCE_DIR}/installer/macos/iamvpn-helper.sh")

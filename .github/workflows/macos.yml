@@ -138,6 +138,53 @@ jobs:
           name: IAMVPN-mac
           path: IAMVPN-mac.dmg
 
+      - name: Launch test like a user (real Cocoa, from the DMG)
+        # The offscreen smoke test above never touches Cocoa or LaunchServices.
+        # Here the app is installed from the DMG and started via `open`, the
+        # way Finder does. If it dies early, the job fails and the release
+        # does not get the DMG.
+        run: |
+          set +e
+          hdiutil attach IAMVPN-mac.dmg -nobrowse -mountpoint /tmp/iamdmg
+          ls -l /tmp/iamdmg/IAMVPN.app/Contents/MacOS
+          cp -R /tmp/iamdmg/IAMVPN.app /Applications/
+          hdiutil detach /tmp/iamdmg
+          APP=/Applications/IAMVPN.app
+          echo "=== codesign"; codesign -dv "$APP" 2>&1 | head -12
+          codesign --verify --deep --strict --verbose=2 "$APP"; echo "verify rc=$?"
+          echo "=== spctl (ad-hoc is expected to be rejected)"; spctl -a -vv -t exec "$APP"
+          echo "=== libraries outside the bundle/system"
+          for f in "$APP/Contents/MacOS/IAMVPN" $(find "$APP/Contents" -name '*.dylib') $(find "$APP/Contents/Frameworks" -type f -perm +111); do
+            otool -L "$f" | tail -n +2 | awk '{print $1}' | grep -vE '^(@rpath|@executable_path|@loader_path|/usr/lib/|/System/)' | sed "s|^|$f -> |"
+          done | sort -u | head -40
+          FAIL=0
+
+          echo "=== 1) direct start, real Cocoa"
+          "$APP/Contents/MacOS/IAMVPN" > direct.log 2>&1 &
+          P=$!; sleep 12
+          if kill -0 $P 2>/dev/null; then echo "DIRECT: running"; kill $P; else echo "DIRECT: DIED"; FAIL=1; fi
+          sleep 2; cat direct.log
+
+          echo "=== 2) open via LaunchServices (as Finder)"
+          open "$APP" --stdout "$PWD/open.out" --stderr "$PWD/open.err"; echo "open rc=$?"
+          sleep 12
+          if pgrep -x IAMVPN >/dev/null; then echo "OPEN: running"; else echo "OPEN: DIED"; FAIL=1; fi
+          pkill -x IAMVPN; sleep 2; cat open.out open.err
+
+          echo "=== 3) quarantined like a Telegram download (informational)"
+          xattr -w com.apple.quarantine "0083;$(printf %x $(date +%s));Telegram;" "$APP"
+          open "$APP"; echo "open rc=$?"; sleep 10
+          if pgrep -x IAMVPN >/dev/null; then echo "QUARANTINED: running"; else echo "QUARANTINED: not running (Gatekeeper)"; fi
+          pkill -x IAMVPN
+
+          echo "=== crash reports"
+          ls -t ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i iamvpn | head
+          R=$(ls -t ~/Library/Logs/DiagnosticReports/*IAMVPN* 2>/dev/null | head -1)
+          [ -n "$R" ] && head -c 6000 "$R"
+          echo "=== system log"
+          log show --last 5m --style compact --predicate 'eventMessage CONTAINS[c] "IAMVPN" OR process == "IAMVPN"' 2>/dev/null | grep -viE "mdworker|spotlight" | tail -60
+          exit $FAIL
+
       - name: Attach to release
         if: github.event_name == 'release'
         env:
