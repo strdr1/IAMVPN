@@ -173,9 +173,13 @@ jobs:
 
           echo "=== 3) quarantined like a Telegram download (informational)"
           xattr -w com.apple.quarantine "0083;$(printf %x $(date +%s));Telegram;" "$APP"
-          open "$APP"; echo "open rc=$?"; sleep 10
+          # With quarantine `open` waits on the Gatekeeper prompt that nobody
+          # answers on a runner — run it in the background and give up after 15 s.
+          open "$APP" & OPID=$!
+          sleep 15
           if pgrep -x IAMVPN >/dev/null; then echo "QUARANTINED: running"; else echo "QUARANTINED: not running (Gatekeeper)"; fi
-          pkill -x IAMVPN
+          kill $OPID 2>/dev/null; pkill -x IAMVPN; pkill -f CoreServicesUIAgent 2>/dev/null
+          xattr -d com.apple.quarantine "$APP" 2>/dev/null
 
           echo "=== crash reports"
           ls -t ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i iamvpn | head
