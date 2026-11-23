@@ -159,6 +159,10 @@ private:
         QString congestion; // tuic congestion_control
         QString udpRelayMode;
         QString unsupported;// непусто → sing-box такое не умеет (причина)
+        // rawtun: если в ключе есть rawtun=1, UDP-трафик (hy2/tuic/wireguard) заворачивается
+        // в экзотический IP-протокол (136/47/132/253) мимо блокировки TCP/UDP/ICMP по IP.
+        // Приложение само поднимает rawtun.exe на host:port, а sing-box ходит на 127.0.0.1:44300.
+        bool rawtun = false;
         QString rawUri;     // исходная ссылка
         bool valid = false;
     };
@@ -206,6 +210,14 @@ private:
     void startEngine(std::function<void(bool, const QString &)> ready);
     void stopEngine();
     bool engineRunning() const;
+
+    // rawtun: обёртка rawtun.exe рядом с sing-box. Если среди подключаемых серверов
+    // есть rawtun-ключ — запускаем клиент rawtun (host:port первого такого сервера,
+    // автоподбор IP-протокола) и ставим правила брандмауэра; гасим при остановке.
+    // Только Windows (нужны raw-сокеты от админа); на macOS rawtun-ключ не грузится.
+    void startRawtun(const Server &s);
+    void stopRawtun();
+    QString rawtunPath() const;
 #ifdef Q_OS_MACOS
     bool macHelperAlive() const;
     QProcess *m_authProc = nullptr;  // osascript с запросом пароля
@@ -231,6 +243,8 @@ private:
     QString m_statusText = QStringLiteral("Не подключено");
 
     QProcess *m_proc = nullptr;     // процесс sing-box
+    QProcess *m_rawtun = nullptr;   // процесс rawtun.exe (Windows)
+    QString m_rawtunServer;         // IP, под который открыты правила брандмауэра rawtun
     Store *m_store = nullptr;       // хранилище ключей/настроек
     QNetworkAccessManager *m_nam = nullptr;
     int m_runId = 0;                // растёт при каждом старте — гасит устаревшие колбэки

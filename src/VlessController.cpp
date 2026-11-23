@@ -688,6 +688,17 @@ VlessController::Server VlessController::parseUri(const QString &uri) const
         return s;   // socks/http/wireguard и прочее — не поддерживаем
     }
 
+    // rawtun=1: UDP-прокси завернуть в экзотический IP-протокол мимо блокировки
+    // TCP/UDP/ICMP по IP. Поддерживаем для UDP-based протоколов (hysteria2/tuic).
+    if (isTrue(qv(q, "rawtun")) && (s.proto == QLatin1String("hysteria2")
+                                    || s.proto == QLatin1String("tuic"))) {
+#ifdef Q_OS_WIN
+        s.rawtun = true;
+#else
+        s.unsupported = QStringLiteral("rawtun (только Windows)");
+#endif
+    }
+
     if (s.name.isEmpty())
         s.name = s.host;
     return s;
@@ -929,8 +940,15 @@ QJsonObject VlessController::buildOutbound(const Server &s, const QString &tag) 
     QJsonObject ob;
     ob["type"] = s.proto;
     ob["tag"] = tag;
-    ob["server"] = s.host;
-    ob["server_port"] = s.port;
+    // rawtun: sing-box подключается к локальной обёртке, а не к серверу напрямую.
+    // SNI/obfs/пароль в ключе остаются от настоящего сервера (их проверяет он).
+    if (s.rawtun) {
+        ob["server"] = QStringLiteral("127.0.0.1");
+        ob["server_port"] = 44300;
+    } else {
+        ob["server"] = s.host;
+        ob["server_port"] = s.port;
+    }
 
     auto alpnArr = [&s]() {
         QJsonArray a;
@@ -1230,6 +1248,16 @@ void VlessController::connectVpn()
               ? QStringLiteral("Подключение · Авто (серверов: %1)…").arg(list.size())
               : QStringLiteral("Подключение к %1…").arg(list.first().name));
 
+    // rawtun: если среди серверов есть rawtun-ключ, поднимаем обёртку ДО sing-box
+    // (все rawtun-ключи в «Авто» должны вести на один сервер — берём первый).
+    const Server *rt = nullptr;
+    for (const Server &x : list)
+        if (x.rawtun) { rt = &x; break; }
+    if (rt)
+        startRawtun(*rt);
+    else
+        stopRawtun();
+
     // Пишем конфиг.
     const QString cfg = buildConfig(list);
     QFile f(configPath());
@@ -1305,11 +1333,90 @@ void VlessController::stopEngine()
     QProcess::startDetached(QStringLiteral("taskkill"),
         {QStringLiteral("/F"), QStringLiteral("/IM"),
          QStringLiteral("sing-box.exe")});
+    stopRawtun();
 }
 
 bool VlessController::engineRunning() const
 {
     return m_proc && m_proc->state() != QProcess::NotRunning;
+}
+
+// ── rawtun (Windows) ────────────────────────────────────────────────────
+QString VlessController::rawtunPath() const
+{
+    return engineDir() + QStringLiteral("/vpn/rawtun.exe");
+}
+
+// Протоколы, которыми rawtun пробует пройти (в порядке предпочтения). Должны совпадать
+// с теми, что слушает сервер, и под каждый нужно входящее правило брандмауэра (для
+// не-TCP/UDP протоколов Windows Firewall не ведёт состояние и режет ответы).
+static const char *kRawtunProtos = "136,47,132,253";
+
+void VlessController::startRawtun(const Server &s)
+{
+    const QString exe = rawtunPath();
+    if (!QFileInfo::exists(exe)) {
+        emit errorOccurred(QStringLiteral("Нет rawtun.exe рядом с движком — ключ rawtun не заработает"));
+        return;
+    }
+    // Если уже запущен под тот же сервер — ничего не делаем.
+    if (m_rawtun && m_rawtun->state() != QProcess::NotRunning && m_rawtunServer == s.host)
+        return;
+    stopRawtun();
+    m_rawtunServer = s.host;
+
+    // Правила брандмауэра: входящие пакеты каждого протокола только от этого сервера.
+    const QStringList protoList = QString::fromLatin1(kRawtunProtos).split(QLatin1Char(','));
+    for (const QString &p : protoList) {
+        const QString name = QStringLiteral("IAMVPN rawtun p%1").arg(p);
+        QProcess::execute(QStringLiteral("netsh"), {
+            QStringLiteral("advfirewall"), QStringLiteral("firewall"),
+            QStringLiteral("delete"), QStringLiteral("rule"),
+            QStringLiteral("name=") + name});
+        QProcess::execute(QStringLiteral("netsh"), {
+            QStringLiteral("advfirewall"), QStringLiteral("firewall"),
+            QStringLiteral("add"), QStringLiteral("rule"),
+            QStringLiteral("name=") + name,
+            QStringLiteral("dir=in"), QStringLiteral("action=allow"),
+            QStringLiteral("protocol=") + p,
+            QStringLiteral("remoteip=") + s.host});
+    }
+
+    m_rawtun = new QProcess(this);
+    m_rawtun->setProgram(exe);
+    m_rawtun->setArguments({
+        QStringLiteral("-mode"), QStringLiteral("client"),
+        QStringLiteral("-proto"), QString::fromLatin1(kRawtunProtos),
+        QStringLiteral("-server"), s.host,
+        QStringLiteral("-listen"), QStringLiteral("127.0.0.1:44300")});
+    m_rawtun->setWorkingDirectory(QFileInfo(exe).absolutePath());
+    m_rawtun->setStandardOutputFile(dataDir() + QStringLiteral("/rawtun.log"), QIODevice::Truncate);
+    m_rawtun->setStandardErrorFile(dataDir() + QStringLiteral("/rawtun.log"), QIODevice::Append);
+    m_rawtun->setCreateProcessArgumentsModifier(
+        [](QProcess::CreateProcessArguments *a) { a->flags |= CREATE_NO_WINDOW; });
+    m_rawtun->start();
+}
+
+void VlessController::stopRawtun()
+{
+    if (m_rawtun) {
+        m_rawtun->kill();
+        m_rawtun->waitForFinished(1500);
+        m_rawtun->deleteLater();
+        m_rawtun = nullptr;
+    }
+    QProcess::startDetached(QStringLiteral("taskkill"),
+        {QStringLiteral("/F"), QStringLiteral("/IM"), QStringLiteral("rawtun.exe")});
+    // Снимаем правила брандмауэра (имена фиксированные).
+    if (!m_rawtunServer.isEmpty()) {
+        const QStringList protoList = QString::fromLatin1(kRawtunProtos).split(QLatin1Char(','));
+        for (const QString &p : protoList)
+            QProcess::startDetached(QStringLiteral("netsh"), {
+                QStringLiteral("advfirewall"), QStringLiteral("firewall"),
+                QStringLiteral("delete"), QStringLiteral("rule"),
+                QStringLiteral("name=IAMVPN rawtun p") + p});
+        m_rawtunServer.clear();
+    }
 }
 #else
 namespace {
@@ -1399,6 +1506,12 @@ bool VlessController::engineRunning() const
 {
     return pidFileAlive(dataDir() + QStringLiteral("/sb.pid"));
 }
+
+// rawtun — только Windows (нужны raw-сокеты от админа). На macOS rawtun-ключ
+// помечается unsupported ещё при разборе, так что сюда не попадёт.
+QString VlessController::rawtunPath() const { return QString(); }
+void VlessController::startRawtun(const Server &) {}
+void VlessController::stopRawtun() {}
 #endif
 
 // Delay-тест через clash API: реальный HTTP-запрос сквозь outbound "proxy".

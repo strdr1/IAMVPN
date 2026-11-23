@@ -1,6 +1,6 @@
 {
-  "version": "1.1.2",
+  "version": "1.2.0",
   "url": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-Setup.exe",
   "url_mac": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-mac.dmg",
-  "notes": "v1.1.2: появилась версия для macOS (DMG для Apple Silicon и Intel). На Windows функции те же, что в 1.1.1."
+  "notes": "v1.2.0: поддержка ключей с параметром rawtun=1 (Windows) — обходит блокировку сервера по IP, заворачивая UDP-трафик в редкий IP-протокол. Нужен сервер с rawtun."
 }
