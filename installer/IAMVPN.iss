@@ -45,8 +45,10 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 Name: "autostart"; Description: "Запускать при старте Windows"; GroupDescription: "Дополнительно:"; Flags: unchecked
 
 [Files]
-; Копируем ВСЁ содержимое build/ (exe + Qt dll + qml + engine с движками)
-Source: "..\build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Копируем ВСЁ содержимое build/ (exe + Qt dll + qml + engine с движками).
+; Исключаем рабочие файлы запущенного приложения: живой конфиг (у юзера свой),
+; логи sing-box/rawtun и флаги — они и мусор в релизе, и держат файл занятым при сборке.
+Source: "..\build\*"; DestDir: "{app}"; Excludes: "engine\vpn\config.json,engine\vpn\*.log,engine\vpn\*.err,engine\vpn\sb.*"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 ; Меню Пуск
