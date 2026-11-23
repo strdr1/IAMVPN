@@ -693,7 +693,11 @@ VlessController::Server VlessController::parseUri(const QString &uri) const
     if (isTrue(qv(q, "rawtun")) && (s.proto == QLatin1String("hysteria2")
                                     || s.proto == QLatin1String("tuic"))) {
 #ifdef Q_OS_WIN
-        s.rawtun = true;
+        // The wrapper takes an IPv4 address only (no DNS: the name could resolve elsewhere).
+        if (QHostAddress(s.host).protocol() == QAbstractSocket::IPv4Protocol)
+            s.rawtun = true;
+        else
+            s.unsupported = QStringLiteral("rawtun (нужен IPv4-адрес сервера, не домен)");
 #else
         s.unsupported = QStringLiteral("rawtun (только Windows)");
 #endif
@@ -1099,6 +1103,18 @@ QString VlessController::buildConfig(const QList<Server> &list) const
     tun["auto_route"] = true;
     tun["strict_route"] = false;   // не воюем жёстко за маршрут
     tun["stack"] = "system";
+    // rawtun: its packets are neither TCP nor UDP, the TUN would swallow and drop them.
+    // Keep the route to such servers on the physical NIC.
+    {
+        QJsonArray exclude;
+        for (const Server &x : list)
+            if (x.rawtun && !QHostAddress(x.host).isNull()) {
+                const QString c = x.host + QStringLiteral("/32");
+                if (!exclude.contains(c)) exclude.append(c);
+            }
+        if (!exclude.isEmpty())
+            tun["route_exclude_address"] = exclude;
+    }
 
     // Inbound MIXED (SOCKS5 + HTTP на одном порту) — для CLI/Node/Python
     // приложений которые обходят TUN и требуют явный HTTPS_PROXY.
@@ -1405,7 +1421,9 @@ void VlessController::stopRawtun()
         m_rawtun->deleteLater();
         m_rawtun = nullptr;
     }
-    QProcess::startDetached(QStringLiteral("taskkill"),
+    // Synchronous on purpose: startRawtun() calls this right before launching a new
+    // instance, and a detached taskkill could fire late and kill that new one.
+    QProcess::execute(QStringLiteral("taskkill"),
         {QStringLiteral("/F"), QStringLiteral("/IM"), QStringLiteral("rawtun.exe")});
     // Снимаем правила брандмауэра (имена фиксированные).
     if (!m_rawtunServer.isEmpty()) {
