@@ -1,6 +1,6 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "url": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-Setup.exe",
   "url_mac": "https://github.com/strdr1/IAMVPN/releases/latest/download/IAMVPN-mac.dmg",
-  "notes": "v1.3.0: ключи на доменах с IPv6 (Cloudflare, trycloudflare) больше не роняют подключение на линиях без IPv6. Поддержка ключей rawtun=1 (Windows) для обхода блокировки сервера по IP."
+  "notes": "v1.4.0: поддержка транспорта xhttp (движок обновлён на sing-box-lx 1.14.4). Ключи с type=xhttp из подписок теперь подключаются. Плюс фиксы 1.3.0 (IPv6, rawtun)."
 }

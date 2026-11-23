@@ -544,6 +544,7 @@ VlessController::Server VlessController::parseUri(const QString &uri) const
         x.path        = qv(q, "path");
         x.hostHeader  = qv(q, "host");
         x.serviceName = qv(q, "serviceName");
+        x.xhttpMode   = qv(q, "mode");   // xhttp
         const QString alpn = qv(q, "alpn");
         if (!alpn.isEmpty())
             x.alpn = alpn.split(QLatin1Char(','), Qt::SkipEmptyParts);
@@ -556,11 +557,14 @@ VlessController::Server VlessController::parseUri(const QString &uri) const
             x.type = QStringLiteral("tcp");
         if (x.type == QLatin1String("h2"))
             x.type = QStringLiteral("http");
+        if (x.type == QLatin1String("splithttp"))
+            x.type = QStringLiteral("xhttp");   // splithttp — старое имя xhttp
         static const QStringList ok = {
             QStringLiteral("tcp"), QStringLiteral("ws"), QStringLiteral("grpc"),
-            QStringLiteral("httpupgrade"), QStringLiteral("http")};
+            QStringLiteral("httpupgrade"), QStringLiteral("http"),
+            QStringLiteral("xhttp")};   // xhttp умеет только движок sing-box-lx (bundled)
         if (!ok.contains(x.type) && x.unsupported.isEmpty())
-            x.unsupported = x.type;   // xhttp / splithttp / kcp / quic
+            x.unsupported = x.type;   // kcp / quic
     };
     auto portOf = [](const QString &p) {
         bool ok = false;
@@ -1006,6 +1010,12 @@ QJsonObject VlessController::buildOutbound(const Server &s, const QString &tag) 
             tr["type"] = "httpupgrade";
             if (!s.path.isEmpty()) tr["path"] = s.path;
             if (!s.hostHeader.isEmpty()) tr["host"] = s.hostHeader;
+        } else if (s.type == QLatin1String("xhttp")) {
+            // xhttp: поддерживается только в движке sing-box-lx. Поля как в xray-ключе.
+            tr["type"] = "xhttp";
+            if (!s.path.isEmpty()) tr["path"] = s.path;
+            if (!s.hostHeader.isEmpty()) tr["host"] = s.hostHeader;
+            if (!s.xhttpMode.isEmpty()) tr["mode"] = s.xhttpMode;
         } else if (s.type == QLatin1String("http")) {
             tr["type"] = "http";
             if (!s.path.isEmpty()) tr["path"] = s.path;

@@ -154,6 +154,7 @@ private:
         QString path;       // ws/httpupgrade/http path
         QString hostHeader; // ws Host-заголовок
         QString serviceName;// grpc serviceName
+        QString xhttpMode;  // xhttp: mode (auto/packet-up/stream-up/stream-one)
         QString obfs;       // hy2 obfs type (salamander)
         QString obfsPassword;
         QString congestion; // tuic congestion_control
