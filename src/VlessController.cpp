@@ -1066,6 +1066,8 @@ QJsonObject VlessController::buildOutbound(const Server &s, const QString &tag) 
         if (s.insecure) tls["insecure"] = true;
         ob["tls"] = tls;
     }
+    // Резолв адреса сервера только в IPv4 задаётся глобально через dns.strategy=ipv4_only
+    // (outbound-level domain_strategy устарел в 1.12 и удалён в 1.14).
     return ob;
 }
 
@@ -1134,7 +1136,10 @@ QString VlessController::buildConfig(const QList<Server> &list) const
     dnsServers.append(QJsonObject{
         {"tag","local"},{"type","udp"},{"server","77.88.8.8"}});
     dns["servers"] = dnsServers;
-    dns["strategy"] = "prefer_ipv4";
+    // ipv4_only, не prefer_ipv4: на линии без IPv6 (почти все домашние в РФ) домен
+    // сервера, отдающий AAAA (например *.trycloudflare.com -> 2606:50c0::), иначе
+    // уводит sing-box в IPv6 и тот падает "address is not valid in its context".
+    dns["strategy"] = "ipv4_only";
     // .ru домены резолвим локально (если включён режим .ru мимо VPN).
     QJsonArray dnsRules;
     if (m_routeRuDirect) {
