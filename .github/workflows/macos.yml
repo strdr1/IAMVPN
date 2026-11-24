@@ -12,7 +12,10 @@ permissions:
   contents: write
 
 env:
-  SING_BOX_VERSION: "1.12.12"
+  # sing-box-lx: sing-box plus the xhttp transport (the same engine the Windows build ships).
+  SING_BOX_VERSION: "1.14.4-lx.35"
+  SING_BOX_SHA_AMD64: "83d1f9ccb10016d7497083391283c66ca558e226111382440dd6f7e2e0c3dfae"
+  SING_BOX_SHA_ARM64: "a4d6f4827015acb3a4e7bb3408066b895bdccc47000d0603e3ea8d19da5768a5"
   PYTHON_PKG: "https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg"
 
 jobs:
@@ -51,10 +54,13 @@ jobs:
         run: |
           mkdir -p engine-mac/vpn sb
           for a in amd64 arm64; do
-            curl -fsSL -o sb/$a.tgz "https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-darwin-$a.tar.gz"
-            tar -xzf sb/$a.tgz -C sb
+            curl -fsSL -o sb/$a.tgz "https://github.com/Leadaxe/sing-box-lx/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-darwin-$a.tar.gz"
+            mkdir -p sb/$a
+            tar -xzf sb/$a.tgz -C sb/$a
           done
-          lipo -create sb/sing-box-${SING_BOX_VERSION}-darwin-amd64/sing-box sb/sing-box-${SING_BOX_VERSION}-darwin-arm64/sing-box -output engine-mac/vpn/sing-box
+          echo "${SING_BOX_SHA_AMD64}  sb/amd64.tgz" | shasum -a 256 -c -
+          echo "${SING_BOX_SHA_ARM64}  sb/arm64.tgz" | shasum -a 256 -c -
+          lipo -create "$(find sb/amd64 -type f -name sing-box | head -1)" "$(find sb/arm64 -type f -name sing-box | head -1)" -output engine-mac/vpn/sing-box
           chmod +x engine-mac/vpn/sing-box
           codesign --force -s - engine-mac/vpn/sing-box
           lipo -info engine-mac/vpn/sing-box
