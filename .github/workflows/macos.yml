@@ -66,6 +66,20 @@ jobs:
           lipo -info engine-mac/vpn/sing-box
           engine-mac/vpn/sing-box version
 
+      - name: rawtun (universal, from source)
+        run: |
+          # The exotic-IP-protocol wrapper. Built here from the repo so no third-party binary
+          # is trusted; falls back to skipping if the source isn't checked out alongside.
+          SRC=rawtun-src
+          ( cd "$SRC"
+            for a in amd64 arm64; do
+              GOOS=darwin GOARCH=$a CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o rawtun-$a .
+            done )
+          lipo -create "$SRC/rawtun-amd64" "$SRC/rawtun-arm64" -output engine-mac/vpn/rawtun
+          chmod +x engine-mac/vpn/rawtun
+          codesign --force -s - engine-mac/vpn/rawtun
+          lipo -info engine-mac/vpn/rawtun
+
       - name: Telegram proxy (PyInstaller, universal2)
         continue-on-error: true
         run: |

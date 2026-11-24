@@ -697,14 +697,15 @@ VlessController::Server VlessController::parseUri(const QString &uri) const
     // TCP/UDP/ICMP по IP. Поддерживаем для UDP-based протоколов (hysteria2/tuic).
     if (isTrue(qv(q, "rawtun")) && (s.proto == QLatin1String("hysteria2")
                                     || s.proto == QLatin1String("tuic"))) {
-#ifdef Q_OS_WIN
-        // The wrapper takes an IPv4 address only (no DNS: the name could resolve elsewhere).
+        // Поддерживается на Windows и macOS (там через root-помощник). На обеих —
+        // только с IPv4-адресом сервера (имя могло бы резолвиться в другое место).
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
         if (QHostAddress(s.host).protocol() == QAbstractSocket::IPv4Protocol)
             s.rawtun = true;
         else
             s.unsupported = QStringLiteral("rawtun (нужен IPv4-адрес сервера, не домен)");
 #else
-        s.unsupported = QStringLiteral("rawtun (только Windows)");
+        s.unsupported = QStringLiteral("rawtun (только Windows и macOS)");
 #endif
     }
 
@@ -1570,9 +1571,59 @@ bool VlessController::engineRunning() const
 
 // rawtun — только Windows (нужны raw-сокеты от админа). На macOS rawtun-ключ
 // помечается unsupported ещё при разборе, так что сюда не попадёт.
-QString VlessController::rawtunPath() const { return QString(); }
-void VlessController::startRawtun(const Server &) {}
-void VlessController::stopRawtun() {}
+// macOS: rawtun runs as root via the same helper as sing-box, driven by flag files.
+QString VlessController::rawtunPath() const
+{
+    return engineDir() + QStringLiteral("/vpn/rawtun");
+}
+
+static QString macNicIPv4()
+{
+    for (const QNetworkInterface &iface : QNetworkInterface::allInterfaces()) {
+        if (!(iface.flags() & QNetworkInterface::IsUp) ||
+            !(iface.flags() & QNetworkInterface::IsRunning) ||
+            (iface.flags() & QNetworkInterface::IsLoopBack))
+            continue;
+        if (iface.name().startsWith(QStringLiteral("utun")))   // skip VPN tunnels
+            continue;
+        for (const QNetworkAddressEntry &e : iface.addressEntries()) {
+            const QHostAddress a = e.ip();
+            if (a.protocol() == QAbstractSocket::IPv4Protocol &&
+                !a.toString().startsWith(QStringLiteral("169.254.")))
+                return a.toString();
+        }
+    }
+    return QString();
+}
+
+void VlessController::startRawtun(const Server &s)
+{
+    const QString dir = dataDir();
+    QString args = QStringLiteral("-mode client -proto 136,47,132,253 -server %1 -listen 127.0.0.1:44300")
+                       .arg(s.host);
+    const QString bindIp = macNicIPv4();
+    if (!bindIp.isEmpty())
+        args += QStringLiteral(" -bind ") + bindIp;
+
+    QFile f(dir + QStringLiteral("/rt.args"));
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        f.write(args.toUtf8());
+        f.close();
+    }
+    // New server -> restart; the helper reloads rt.args.
+    if (m_rawtunServer != s.host) {
+        touchFile(dir + QStringLiteral("/rt.restart"));
+        m_rawtunServer = s.host;
+    }
+    touchFile(dir + QStringLiteral("/rt.run"));
+}
+
+void VlessController::stopRawtun()
+{
+    const QString dir = dataDir();
+    QFile::remove(dir + QStringLiteral("/rt.run"));
+    m_rawtunServer.clear();
+}
 #endif
 
 // Delay-тест через clash API: реальный HTTP-запрос сквозь outbound "proxy".
