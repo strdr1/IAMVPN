@@ -28,6 +28,7 @@
 #include <QNetworkReply>
 #include <QNetworkProxy>
 #include <QHostAddress>
+#include <QNetworkInterface>
 #include <QHostInfo>
 #include <QTcpSocket>
 #include <QElapsedTimer>
@@ -1413,13 +1414,40 @@ void VlessController::startRawtun(const Server &s)
             QStringLiteral("remoteip=") + s.host});
     }
 
+    // Raw-сокет нужно привязать к IPv4 физической сетевухи. Без -bind он садится на
+    // 0.0.0.0, и Windows отвечает "access forbidden" (а к адресу сетевухи — пускает).
+    // rawtun стартует ДО sing-box, так что TUN iamvpn0 ещё не поднят и не мешает выбору.
+    QString bindIp;
+    for (const QNetworkInterface &iface : QNetworkInterface::allInterfaces()) {
+        if (!(iface.flags() & QNetworkInterface::IsUp) ||
+            !(iface.flags() & QNetworkInterface::IsRunning) ||
+            (iface.flags() & QNetworkInterface::IsLoopBack))
+            continue;
+        for (const QNetworkAddressEntry &e : iface.addressEntries()) {
+            const QHostAddress a = e.ip();
+            if (a.protocol() != QAbstractSocket::IPv4Protocol)
+                continue;
+            const QString ip = a.toString();
+            if (ip.startsWith(QStringLiteral("169.254.")) ||       // link-local
+                ip.startsWith(QStringLiteral("172.19.")) ||        // наш TUN
+                ip.startsWith(QStringLiteral("172.20.")))          // TUN R6 Tunnel
+                continue;
+            bindIp = ip;
+            break;
+        }
+        if (!bindIp.isEmpty()) break;
+    }
+
     m_rawtun = new QProcess(this);
     m_rawtun->setProgram(exe);
-    m_rawtun->setArguments({
+    QStringList args{
         QStringLiteral("-mode"), QStringLiteral("client"),
         QStringLiteral("-proto"), QString::fromLatin1(kRawtunProtos),
         QStringLiteral("-server"), s.host,
-        QStringLiteral("-listen"), QStringLiteral("127.0.0.1:44300")});
+        QStringLiteral("-listen"), QStringLiteral("127.0.0.1:44300")};
+    if (!bindIp.isEmpty())
+        args << QStringLiteral("-bind") << bindIp;
+    m_rawtun->setArguments(args);
     m_rawtun->setWorkingDirectory(QFileInfo(exe).absolutePath());
     m_rawtun->setStandardOutputFile(dataDir() + QStringLiteral("/rawtun.log"), QIODevice::Truncate);
     m_rawtun->setStandardErrorFile(dataDir() + QStringLiteral("/rawtun.log"), QIODevice::Append);
